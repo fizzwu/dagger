@@ -30,7 +30,7 @@ func newSession(conn *net.TCPConn, server *Server) *Session {
 	return &Session{
 		server:    server,
 		conn:      conn,
-		closeChan: make(chan struct{}, 1),
+		closeChan: make(chan struct{}),
 		sendChan:  make(chan Packet, server.packetSendSize),
 		recvChan:  make(chan Packet, server.packetRecvSize),
 	}
