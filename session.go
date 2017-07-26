@@ -118,7 +118,7 @@ func (s *Session) readLoop() {
 	}
 }
 
-// receive data from the recvChan, write to conn
+// receive data from the sendChan, write to conn
 func (s *Session) writeLoop() {
 	defer func() {
 		recover()
