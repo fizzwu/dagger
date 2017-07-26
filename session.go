@@ -1,9 +1,18 @@
 package dagger
 
 import (
+	"errors"
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
+)
+
+var (
+	// ErrConnClosed ..
+	ErrConnClosed = errors.New("connection closed")
+	// ErrWriteBlocked ..
+	ErrWriteBlocked = errors.New("write packet blocked")
 )
 
 // Session ...
@@ -21,9 +30,9 @@ func newSession(conn *net.TCPConn, server *Server) *Session {
 	return &Session{
 		server:    server,
 		conn:      conn,
-		closeChan: make(chan struct{}),
-		sendChan:  make(chan Packet),
-		recvChan:  make(chan Packet),
+		closeChan: make(chan struct{}, 1),
+		sendChan:  make(chan Packet, server.packetSendSize),
+		recvChan:  make(chan Packet, server.packetRecvSize),
 	}
 }
 
@@ -39,12 +48,39 @@ func (s *Session) IsClosed() bool {
 
 // Close closes the session
 func (s *Session) Close() {
-	atomic.StoreInt32(&s.closeFlag, 1)
-	close(s.closeChan)
-	close(s.sendChan)
-	close(s.recvChan)
-	s.conn.Close()
-	s.server.callback.OnClose(s)
+	s.closeOnce.Do(func() {
+		atomic.StoreInt32(&s.closeFlag, 1)
+		close(s.closeChan)
+		close(s.sendChan)
+		close(s.recvChan)
+		s.conn.Close()
+		s.server.callback.OnClose(s)
+	})
+}
+
+// SendPacket sends a packet to the sendChan, the write loop will write the packet into the raw conn
+// this method will never block
+func (s *Session) SendPacket(p Packet, timeout time.Duration) (err error) {
+	if s.IsClosed() {
+		return ErrConnClosed
+	}
+	if timeout == 0 {
+		select {
+		case s.sendChan <- p:
+			return nil
+		default:
+			return ErrWriteBlocked
+		}
+	}
+
+	select {
+	case s.sendChan <- p:
+		return nil
+	case <-s.closeChan:
+		return ErrConnClosed
+	case <-time.After(timeout):
+		return ErrWriteBlocked
+	}
 }
 
 // Work is the session handler
@@ -53,9 +89,9 @@ func (s *Session) Work() {
 		return
 	}
 
-	parallel(s.handleLoop, s.server.waitGroup)
-	parallel(s.readLoop, s.server.waitGroup)
-	parallel(s.writeLoop, s.server.waitGroup)
+	goWork(s.handleLoop, s.server.waitGroup)
+	goWork(s.readLoop, s.server.waitGroup)
+	goWork(s.writeLoop, s.server.waitGroup)
 }
 
 // read packet from the conn and send to recvChan
@@ -95,7 +131,7 @@ func (s *Session) writeLoop() {
 			return
 		case <-s.closeChan:
 			return
-		case p := <-s.recvChan:
+		case p := <-s.sendChan:
 			if s.IsClosed() {
 				return
 			}
@@ -122,7 +158,7 @@ func (s *Session) handleLoop() {
 			if s.IsClosed() {
 				return
 			}
-			if !s.server.callback.OnMessage(s, p) { // session closed
+			if !s.server.callback.OnMessage(s, p) { // handle message callback
 				return
 			}
 		}
@@ -130,7 +166,7 @@ func (s *Session) handleLoop() {
 }
 
 // run function in a goroutine with waitgroup managed
-func parallel(f func(), wg *sync.WaitGroup) {
+func goWork(f func(), wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
 		f()

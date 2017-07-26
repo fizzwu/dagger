@@ -6,18 +6,23 @@ import "time"
 
 // Server ...
 type Server struct {
-	protocol  Protocol        // custom packet protocol
-	callback  SessionCallback // custom server callback
-	exitChan  chan struct{}   // notify all goroutines to close
-	waitGroup *sync.WaitGroup // wait for all goroutines
+	protocol       Protocol        // custom packet protocol
+	callback       SessionCallback // custom server callback
+	exitChan       chan struct{}   // notify all goroutines to close
+	waitGroup      *sync.WaitGroup // wait for all goroutines
+	packetSendSize uint32          // session's packet send channel size
+	packetRecvSize uint32          // session's packet receive channel size
 }
 
 // NewServer inits a new server instance
-func NewServer(protocol Protocol) *Server {
+func NewServer(callback SessionCallback, protocol Protocol, packetSendSize uint32, packetRecvSize uint32) *Server {
 	return &Server{
-		protocol:  protocol,
-		exitChan:  make(chan struct{}),
-		waitGroup: &sync.WaitGroup{},
+		protocol:       protocol,
+		callback:       callback,
+		exitChan:       make(chan struct{}),
+		waitGroup:      &sync.WaitGroup{},
+		packetSendSize: packetSendSize,
+		packetRecvSize: packetRecvSize,
 	}
 }
 
